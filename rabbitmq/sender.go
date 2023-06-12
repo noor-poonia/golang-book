@@ -19,5 +19,6 @@ func PublishMessage(ch *amqp.Channel, queue amqp.Queue, book model.Book) error {
 	
 	CheckError(err, "Failed to publish message")
 	log.Println("Message Published Successfully")
+	log.Printf("message was: %v\n", string(bookBytes))
 	return nil
 }

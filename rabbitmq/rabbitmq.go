@@ -2,11 +2,12 @@ package rabbitmq
 
 import (
 	"fmt"
+	"log"
 	"os"
 
+	"github.com/joho/godotenv"
 	"github.com/matryer/resync"
 	amqp "github.com/rabbitmq/amqp091-go"
-	// "go.uber.org/zap"
 )
 
 type Rabbit struct{}
@@ -29,29 +30,22 @@ func GetRMQConn() *amqp.Connection {
 	return rabbitConn
 }
 
-// func (r *RabbitConnect) GetRabbitChannel() *RabbitConnect {
-// 	channel, err1 := GetRMQConn().Channel()
-// 	if err1 != nil {
-// 		zap.L().Fatal("Error in creating channel", zap.Any("error", err1))
-// 	}
-
-// 	zap.L().Info("Rabbit MQ connected!")
-
-// 	return &RabbitConnect{channel}
-// }
-
 func RMQConnection() *amqp.Connection {
-	conn, err := amqp.Dial(getRMQConnectionString())
+	conn, err := amqp.Dial(GetRMQConnectionString())
 	if err != nil {
 		e := fmt.Sprintf("failed to connect: %s", err)
-		fmt.Println(e)
+		panic(e)
 	}
 
 	rabbitConn = conn
 	return rabbitConn
 }
 
-func getRMQConnectionString() string {
+func GetRMQConnectionString() string {
+	err := godotenv.Load()
+    if err != nil {
+        log.Fatalf("err loading: %v", err)
+    }
 	var connect string
 	host := os.Getenv("RABBIT_HOST")
 	username := os.Getenv("RABBIT_USERNAME")
