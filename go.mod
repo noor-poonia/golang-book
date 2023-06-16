@@ -3,7 +3,6 @@ module go-rabbitmq
 go 1.18
 
 require (
-	github.com/go-sql-driver/mysql v1.7.1
 	github.com/gorilla/mux v1.8.0
 	github.com/joho/godotenv v1.5.1
 	github.com/matryer/resync v0.0.0-20161211202428-d39c09a11215
