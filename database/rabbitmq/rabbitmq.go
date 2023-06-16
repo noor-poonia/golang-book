@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"encoding/json"
+	"go-rabbitmq/model"
+	"go-rabbitmq/database/mongodb"
 
 	"github.com/joho/godotenv"
 	"github.com/matryer/resync"
@@ -83,4 +86,73 @@ func CheckError(err error, msg string) error {
 	}
 
 	return nil
+}
+
+// sender
+func PublishMessage(book model.Book) error {
+
+	conn := RMQConnection()
+	defer conn.Close()
+	ch := RMQChannel(conn)
+	defer ch.Close()
+
+	queue := RMQQueue(ch)
+	
+	bookBytes, err := json.Marshal(book) 
+
+	err = ch.Publish("", queue.Name, false, false, amqp.Publishing{
+		ContentType: "application/json",
+		Body: bookBytes,
+	})
+	
+	CheckError(err, "Failed to publish message")
+	log.Println("Message Published Successfully")
+	log.Printf("message was: %v\n", string(bookBytes))
+	return nil
+}
+
+// receiver 
+func ConsumeMessage(ch *amqp.Channel, queue amqp.Queue) (<-chan amqp.Delivery, error) {
+	data, err := ch.Consume(
+		queue.Name,
+		"",
+		true,
+		false,
+		false,
+		false,
+		nil,
+	)
+	CheckError(err, "Failed to consume message")
+
+	return data, nil
+	
+}
+
+func Consumer() {
+	conn := RMQConnection()
+	defer conn.Close()
+	ch := RMQChannel(conn)
+	defer ch.Close()
+
+	queue := RMQQueue(ch)
+
+	bookData, err := ConsumeMessage(ch, queue)
+	if err!= nil {
+        CheckError(err, "failed to consume")
+    }
+	var books []model.Book
+	// go func ()  {
+		for d := range bookData {
+			// fmt.Printf("d is: %v\n", d)
+			var book model.Book
+			err := json.Unmarshal(d.Body, &book)
+			if err != nil {
+				log.Printf("Failed to unmarshal messages: %v\n", err)
+				continue
+			}
+			books = append(books, book)
+			mongodb.InsertBooks(books)
+			// d.Ack(false)
+		}
+	// }()
 }

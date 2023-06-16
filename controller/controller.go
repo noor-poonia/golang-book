@@ -3,15 +3,13 @@ package controller
 import (
 	"encoding/json"
 	"fmt"
-	"go-rabbitmq/logs"
+	"go-rabbitmq/constants"
 	"go-rabbitmq/model"
-	"go-rabbitmq/mongodb"
+	"go-rabbitmq/database/mongodb"
+	"go-rabbitmq/database/rabbitmq"
+	"go-rabbitmq/utils"
 	"log"
-	"go-rabbitmq/rabbitmq"
-	"go-rabbitmq/validate"
 	"net/http"
-
-	// "github.com/gorilla/mux"
 )
 
 func CreateMessage(w http.ResponseWriter, r *http.Request) {
@@ -23,96 +21,95 @@ func CreateMessage(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		res = model.Response{
 			Code: "A105",
-			Message: logs.Logs["A105"],
+			Message: constants.Logs["A105"],
 			Data: []model.Book{},
-			Error: []string{err.Error()},
+			Error: []string{"Failed to parse data - Check the values"},
 		}
 		json.NewEncoder(w).Encode(res)
 		return
-	}
-
-	e := validate.Validate(book)
-	if e != nil {
-		fmt.Printf("error is: %v\n", e)
-		res = model.Response{
-			Code: "A106",
-			Message: logs.Logs["A106"],
-			Data: []model.Book{},
-			Error: []string{e.Error()},
+	} else {
+		value := validate.Validate(book)
+		if value != nil {
+			log.Printf("error is: %v\n", value.Error())
+			res = model.Response{
+				Code: "A106",
+				Message: constants.Logs["A106"],
+				Data: []model.Book{},
+				Error: []string{"Book Validation Failed - Check the values again", constants.Logs["A111"], constants.Logs["A112"], constants.Logs["A113"]},
+			}
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(res)
+		} else {
+			// TODO: check if book already exists
+			b, err := mongodb.GetBooks(book.ISBN)
+			if b != nil {
+				res = model.Response{
+					Code: "A115",
+					Message: constants.Logs["A115"],
+					Data: []model.Book{},
+					Error: []string{"Book already exists with the provided ISBN"},
+				}
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(res)
+			} else {
+				err = rabbitmq.PublishMessage(book)
+				if err != nil {
+					res = model.Response{
+						Code: "A114",
+						Message: constants.Logs["A114"],
+						Data: []model.Book{},
+						Error: []string{"Check RabbitMQ Connection"},
+					}
+					w.WriteHeader(http.StatusBadGateway)
+					json.NewEncoder(w).Encode(res)
+				} else {
+					w.WriteHeader(http.StatusAccepted)
+					res = model.Response{
+						Code: "A101",
+						Message: constants.Logs["A101"],
+						Data: []model.Book{},
+						Error: []string{},
+					}
+					json.NewEncoder(w).Encode(res)
+				}
+			}
+			
 		}
-		json.NewEncoder(w).Encode(res)
-		return
 	}
-
-	conn := rabbitmq.RMQConnection()
-	defer conn.Close()
-	ch := rabbitmq.RMQChannel(conn)
-	defer ch.Close()
-
-	queue := rabbitmq.RMQQueue(ch)
-
-	err = rabbitmq.PublishMessage(ch, queue, book)
-	if err != nil {
-		http.Error(w, "Failed to publish message", http.StatusInternalServerError)
-		return 
-	}
-	w.WriteHeader(http.StatusAccepted)
-	res = model.Response{
-		Code: "A101",
-		Message: logs.Logs["A101"],
-		Data: []model.Book{},
-		Error: []string{},
-	}
-	json.NewEncoder(w).Encode(res)
 }
 
 func GetBooks(w http.ResponseWriter, r *http.Request) {
 	res := model.Response{}
-	// books := []model.Book{}
 	isbn := r.URL.Query().Get("isbn")
 	log.Printf("isbn: %v\n", isbn)
-	if isbn == "" {
-		// TODO: return all the books
-		books, err := mongodb.GetAllBooks()
-		if err!= nil {
-    		w.WriteHeader(http.StatusInternalServerError)
-			res = model.Response{
-				Code: "A104",
-				Message: logs.Logs["A104"],
-				Data: []model.Book{},
-				Error: []string{"Failed to retriev books - check mongodb connection"},
-			}
-    		json.NewEncoder(w).Encode(res)
-    	}
+	books, err := mongodb.GetBooks(isbn)
+	if err!= nil {
+    	w.WriteHeader(http.StatusInternalServerError)
 		res = model.Response{
-			Code: "A101",
-			Message: logs.Logs["A101"],
-			Data: books,
-			Error: []string{},
+			Code: "A104",
+			Message: constants.Logs["A104"],
+			Data: []model.Book{},
+			Error: []string{err.Error()},
 		}
-		w.WriteHeader(http.StatusAccepted)
-		json.NewEncoder(w).Encode(res)
-	} else {
-		// TODO: return the book
-		// var book model.Book
-		book, err := mongodb.GetOneBook(isbn)
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
+    	json.NewEncoder(w).Encode(res)
+    } else {
+		if books == nil {	
 			res = model.Response{
 				Code: "A102",
-				Message: logs.Logs["A102"],
+				Message: constants.Logs["A102"],
 				Data: []model.Book{},
-				Error: []string{err.Error()},
+				Error: []string{"No books found with the given ISBN number"},
 			}
+			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(res)
 		} else {
 			res = model.Response{
 				Code: "A101",
-				Message: logs.Logs["A101"],
-				Data: []model.Book{book},
+				Message: constants.Logs["A101"],
+				Data: books,
 				Error: []string{},
 			}
-			w.WriteHeader(http.StatusAccepted)
+			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(res)
 		}
 	}
@@ -120,67 +117,87 @@ func GetBooks(w http.ResponseWriter, r *http.Request) {
 
 func UpdateOneBook(w http.ResponseWriter, r *http.Request)  {
 	var book model.Book
+	res := model.Response{}
 	err := json.NewDecoder(r.Body).Decode(&book)
 	isbn := book.ISBN
-	// isbn := r.URL.Query().Get("isbn")
-	res := model.Response{}
+	log.Printf("length isbn: %v\n", len(isbn))
+	log.Printf("book is: %v\n", book)
+	log.Printf("isbn inside update one book controller function: %v\n", isbn)
+	log.Printf("err inside update one book controller function: %v\n", err)
+	// checking the data type - parsing error
 	if err != nil {
 		log.Println("error: ", err)
 		w.WriteHeader(http.StatusBadRequest)
 		res = model.Response{
 			Code: "A105",
-			Message: logs.Logs["A105"],
+			Message: constants.Logs["A105"],
 			Data: []model.Book{},
-			Error: []string{err.Error()},
+			Error: []string{"Failed to parse data - Check the values"},
 		}
 		json.NewEncoder(w).Encode(res)
 		return
 	}
-	if isbn == "" {	
+	// main update functionality 
+	if isbn == "" || len(isbn) != 13 {	
 		res = model.Response{
 			Code: "A108",
-			Message: logs.Logs["A108"],
+			Message: constants.Logs["A108"],
 			Data: []model.Book{},
-			Error: []string{"ISBN Number Not Provided"},
+			Error: []string{"ISBN Number Not Provided or ISBN is not of 13 digits"},
 		}
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(res)
 	} else {
-		
-		
-
-		e := validate.Validate(book)
+		b, e := mongodb.GetBooks(isbn)
+		log.Printf("Error %v\n", e)
 		if e != nil {
-			fmt.Printf("error is: %v\n", e)
+			// log.Printf("no book found: %v\n", err.Error())
 			res = model.Response{
-				Code: "A106",
-				Message: logs.Logs["A106"],
+				Code: "A102",
+				Message: "No book found with the provided ISBN",
 				Data: []model.Book{},
-				Error: []string{e.Error()},
+				Error: []string{"Book not found with the provided ISBN, Check your ISBN number again"},
 			}
-			json.NewEncoder(w).Encode(res)
-			return
-		}
-		b, er := mongodb.UpdateOneBook(isbn, book)
-		if er != nil {
-			log.Printf("book not updated: %v\n", er)
-			w.WriteHeader(http.StatusBadGateway)
-			res = model.Response{
-				Code: "A110",
-				Message: logs.Logs["A110"],
-				Data: []model.Book{},
-				Error: []string{"Failed to Update the Book with the given ISBN"},
-			}
+			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(res)
 		} else {
-			w.WriteHeader(http.StatusAccepted)
-			res = model.Response{
-				Code: "A109",
-				Message: logs.Logs["A109"],
-				Data: []model.Book{b},
-				Error: []string{},
+			value := validate.Validate(book)
+			log.Printf("value: %v\n", value)
+			if value != nil {
+				fmt.Printf("error is: %v\n", e)
+				res = model.Response{
+					Code: "A106",
+					Message: constants.Logs["A106"],
+					Data: []model.Book{},
+					Error: []string{"Book Validation Failed - Check the values again", constants.Logs["A111"], constants.Logs["A112"], constants.Logs["A113"]},
+				}
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(res)
+
+			} else {
+				updatedBook, er := mongodb.UpdateOneBook(isbn, b[0], book)
+				log.Printf("value of updated book is: %v\n", updatedBook)
+				if er != nil {
+					log.Printf("book not updated: %v\n", er)
+					w.WriteHeader(http.StatusBadGateway)
+					res = model.Response{
+						Code: "A110",
+						Message: constants.Logs["A110"],
+						Data: []model.Book{},
+						Error: []string{"Failed to Update the Book with the given ISBN"},
+					}
+					json.NewEncoder(w).Encode(res)
+				} else {
+					w.WriteHeader(http.StatusOK)
+					res = model.Response{
+						Code: "A109",
+						Message: constants.Logs["A109"],
+						Data: []model.Book{updatedBook},
+						Error: []string{},
+					}
+					json.NewEncoder(w).Encode(res)
+				}
 			}
-			json.NewEncoder(w).Encode(res)
 		}
 	}
 }
@@ -191,7 +208,7 @@ func DeleteOneBook(w http.ResponseWriter, r *http.Request)  {
 	if isbn == "" {
 		res = model.Response{
 			Code: "A108",
-			Message: logs.Logs["A108"],
+			Message: constants.Logs["A108"],
 			Data: []model.Book{},
 			Error: []string{"No ISBN Found in the Query Parameters"},
 		}
@@ -202,7 +219,7 @@ func DeleteOneBook(w http.ResponseWriter, r *http.Request)  {
 		if err != nil {
 			res = model.Response{
 				Code: "A102",
-				Message: logs.Logs["A102"],
+				Message: constants.Logs["A102"],
 				Data: []model.Book{},
 				Error: []string{"No Book Found with the requested ISBN"},
 			}
@@ -211,11 +228,11 @@ func DeleteOneBook(w http.ResponseWriter, r *http.Request)  {
 		} else {
 			res = model.Response{
 				Code: "A107",
-				Message: logs.Logs["A107"],
+				Message: constants.Logs["A107"],
 				Data: []model.Book{book},
 				Error: []string{},
 			}
-			w.WriteHeader(http.StatusAccepted)
+			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(res)
 		}
 	}

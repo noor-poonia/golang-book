@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"go-rabbitmq/rabbitmq"
+	"go-rabbitmq/database/rabbitmq"
 )
 
 func main()  {
