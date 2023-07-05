@@ -28,14 +28,16 @@ func CreateMessage(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(res)
 		return
 	} else {
-		value := validate.Validate(book)
+		msg, value  := validate.Validate(book)
+		fmt.Printf("string recieved from validation: %s\n", value)
+		log.Printf("msg is %v\n", value)
 		if value != nil {
-			log.Printf("error is: %v\n", value.Error())
+			log.Printf("error is: %v\n", value)
 			res = model.Response{
 				Code: "A106",
 				Message: constants.Logs["A106"],
 				Data: []model.Book{},
-				Error: []string{"Book Validation Failed - Check the values again", constants.Logs["A111"], constants.Logs["A112"], constants.Logs["A113"]},
+				Error: []string{msg},
 			}
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(res)
@@ -161,7 +163,7 @@ func UpdateOneBook(w http.ResponseWriter, r *http.Request)  {
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(res)
 		} else {
-			value := validate.Validate(book)
+			msg, value := validate.Validate(book)
 			log.Printf("value: %v\n", value)
 			if value != nil {
 				fmt.Printf("error is: %v\n", e)
@@ -169,7 +171,7 @@ func UpdateOneBook(w http.ResponseWriter, r *http.Request)  {
 					Code: "A106",
 					Message: constants.Logs["A106"],
 					Data: []model.Book{},
-					Error: []string{"Book Validation Failed - Check the values again", constants.Logs["A111"], constants.Logs["A112"], constants.Logs["A113"]},
+					Error: []string{msg},
 				}
 				w.WriteHeader(http.StatusBadRequest)
 				json.NewEncoder(w).Encode(res)
